@@ -570,9 +570,6 @@ def main(
     tracker_df = get_central_tracker(dataset)
     # tracker_df = tracker_df.replace("0", 0)
     proj_name = os.path.basename(os.path.normpath(dataset)).removesuffix("-dataset")
-    # FIXME FIXME FIXME DO NOT INCLUDE THIS IN PRODUCTION CODE
-    if "-" in proj_name:
-        proj_name = proj_name.split("-")[1]
 
     logger.debug("Project name: %s", proj_name)
     data_tracker_file = os.path.join(
