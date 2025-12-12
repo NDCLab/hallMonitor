@@ -1,0 +1,19 @@
+[project]
+name = "hallmonitor"
+version = "0.1.0"
+description = "HallMonitor — validation and QA utilities"
+readme = "README.md"
+requires-python = ">=3.10"
+
+dependencies = [
+    "numpy",
+    "pandas",
+    "pytz",
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+hallmonitor = "hallmonitor.__main__:main"
