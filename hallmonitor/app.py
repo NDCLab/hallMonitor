@@ -28,6 +28,9 @@ from hallmonitor.hmutils import (
     get_deviation_string,
     get_eeg_errors,
     get_expected_combination_rows,
+    get_joint_root_vars,
+    get_deviation_file,
+    get_no_data_file,
     get_expected_files,
     get_expected_identifiers,
     get_file_record,
@@ -103,13 +106,25 @@ def validate_data(
     # create present and implied identifier lists
     present_ids = get_present_identifiers(dataset, is_raw=is_raw)
     expected_ids = get_expected_identifiers(dataset, present_ids)
+    # FIXME: handle combination rows that have missing variables
     missing_ids = list(set(expected_ids) - set(present_ids))
+    # Filter out any missing IDs that are combination variables
+    joint_rows = get_joint_root_vars(dataset)
+    logger.debug("Joint rows: %s", joint_rows)
+    combo_rows = get_expected_combination_rows(dataset)
+    combo_variables = set()
+    for combo in combo_rows:
+        combo_variables.update(combo.variables)
+    missing_ids = [id for id in missing_ids if id.variable not in combo_variables]
+    
     logger.debug(
         "Found %d present id(s), %d expected id(s), %d missing id(s)",
         len(present_ids),
         len(expected_ids),
         len(missing_ids),
     )
+
+    
 
     # raise errors for missing identifiers without a no-data.txt
     for id in missing_ids:
@@ -138,11 +153,15 @@ def validate_data(
         if use_legacy_exceptions:
             no_data_file = "no-data.txt"
         else:
-            no_data_file = f"{id}_no-data.txt"
+            dir_files = os.listdir(missing_id_dir)
+            no_data_file = get_no_data_file(dir_files, id, joint_rows,logger)
 
-        if any([file == no_data_file for file in os.listdir(missing_id_dir)]):
+        
+
+        if no_data_file and os.path.isfile(os.path.join(missing_id_dir, no_data_file)):
             logger.debug("Skipping %s, no-data.txt found", str(id))
             continue
+
         pending.append(
             new_error_record(
                 logger,
@@ -156,9 +175,14 @@ def validate_data(
 
     sub_ses_run = get_unique_sub_ses_run(present_ids)
     logger.debug("Found %d unique subject/session/run combinations", len(sub_ses_run))
-
+    #FIXME: This code is way too nested, needs to be broken into functions
     # check conditions for combination rows
+    # throw error if for a given subject/session/run:
+    # there are multiple combination variables present
+    # or none of the combination variables are present
     combo_rows = get_expected_combination_rows(dataset)
+    # get all variables associated with joint rows
+        
     for combo in combo_rows:
         for sub, ses, run in sub_ses_run:
             present_combo_ids = [
@@ -210,6 +234,7 @@ def validate_data(
     logged_missing_ids = {}  # allow for multiple types of non-identifier-specific errors
 
     # loop over present identifiers (as Identifier objects)
+
     for id in present_ids:
         logger.debug("Checking identifier %s", str(id))
         # initialize error tracking for this directory if it doesn't exist
@@ -287,11 +312,20 @@ def validate_data(
             deviation_file = "deviation.txt"
             no_data_file = "no-data.txt"
         else:
+            # alright within each id store the combination variables
             deviation_file = f"{id}_deviation.txt"
             no_data_file = f"{id}_no-data.txt"
 
         has_deviation = deviation_file in dir_filenames
         has_no_data = no_data_file in dir_filenames
+        # in case of joint rows
+        if not has_deviation:
+            deviation_file = get_deviation_file(dir_filenames, id, joint_rows,logger)
+            has_deviation = True if deviation_file else False
+        if not has_no_data:
+            no_data_file = get_no_data_file(dir_filenames, id, joint_rows,logger)
+            has_no_data = True if no_data_file else False
+
 
         logger.debug("has_deviation=%s, has_no_data=%s", has_deviation, has_no_data)
         if has_deviation and has_no_data:
@@ -437,7 +471,7 @@ def validate_data(
             if use_legacy_exceptions:
                 expected_files = ["no-data.txt"]
             else:
-                expected_files = [f"{id}_no-data.txt"]
+                expected_files = [no_data_file]
         elif has_deviation:
             # expect at least 2 appropriately-named files
             # (deviation.txt and at least one other file)
@@ -454,6 +488,7 @@ def validate_data(
                 )
                 directory_has_errors = True
         else:  # normal case
+            # FIXME: help it determine combination/joint rows
             expected_files = [
                 os.path.basename(file) for file in get_expected_files(dataset, id)
             ]
@@ -467,6 +502,7 @@ def validate_data(
 
         # check for missing expected files
         n_missing = 0
+        unexpected_files = []
         for file in expected_files:
             if file not in dir_filenames:
                 pending.append(
@@ -485,9 +521,35 @@ def validate_data(
             directory_has_errors = True
 
         # check for unexpected file presence
+        # FIXME : this does not handle combination/joint variables yet
         n_unexpected = 0
+        unexpected_files = []
+
         for file in dir_filenames:
             if file not in expected_files:
+                unexpected_files.append(file)
+        logger.debug("Unexpected files before sibling check: %s", unexpected_files)
+        # FIXME too many nested loops, break this out or put in a function
+        if unexpected_files:
+            for jr in joint_rows:
+                if id.variable in jr.variables:
+                    for var in jr.variables:
+                        sibling_id = Identifier(
+                            id.subject, var, id.session, id.run, id.event
+                        )
+                        # check if sibling_id is in present_ids
+                        if sibling_id in present_ids:
+                            sibling_files = get_expected_files(dataset, sibling_id)
+                            # get the difference between unexpected_files and sibling_files
+                            logger.debug("Sibling files for ID %s: %s", sibling_id, sibling_files)
+                            for file in unexpected_files[:]:
+                                if file in sibling_files:
+                                    unexpected_files.remove(file)
+                        else: 
+                            logger.debug("Sibling ID %s not present", sibling_id)
+        logger.debug("Unexpected files after sibling check: %s", unexpected_files)        
+        if unexpected_files:
+            for file in unexpected_files:
                 pending.append(
                     new_error_record(
                         logger,

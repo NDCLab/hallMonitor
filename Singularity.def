@@ -29,7 +29,7 @@ From: python:3.13-slim
     pip install --no-cache-dir --root-user-action=ignore mock pluggy pytest
 
     # Run tests, failing the build if unsuccessful
-    python -m pytest --cache-clear
+    python -m pytest --cache-clear -vs
 
     # Remove test-only dependencies
     pip uninstall --no-cache-dir --root-user-action=ignore --yes mock pluggy pytest
