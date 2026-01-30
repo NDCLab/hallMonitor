@@ -296,6 +296,8 @@ class Identifier:
             s += " (encrypted)"
         if is_combination_var(dataset, self.variable):
             s += " (combination)"
+        if is_join_var(dataset, self.variable):
+            s += " (joint)"
         if self.is_missing:
             s += " (missing)"
         return s
@@ -682,6 +684,55 @@ def is_combination_var(dataset, variable):
 
 
 @cache_with_metadata()
+def is_join_var(dataset, variable):
+    """Returns bool for whether a variable is present in a joint row"""
+    dd_df = get_datadict(dataset)
+    dtype = dd_df[dd_df["variable"] == variable]["dataType"]
+    if dtype.empty:
+        raise ValueError(f"Variable {variable} not valid")
+    combos_df = dd_df[dd_df["dataType"] == "joint"]
+    for _, row in combos_df.iterrows():
+        prov = str(row["provenance"])
+        if "variables:" in prov:
+            vars = prov.removeprefix("variables:").strip()
+            vars = vars.replace('"', "")
+            vars = vars.split(",")
+            vars = [v.strip() for v in vars]
+            if variable in vars:
+                return True
+    return False
+
+
+@cache_with_metadata()
+def get_all_join_var(dataset,variable):
+    """Get all joint variable rows from the data dictionary
+
+    Args:
+        dataset (str): The path to the dataset directory.
+    Returns:
+        list of JointRow: A list of JointRow objects representing joint variable rows.
+    """
+    dd_df = get_datadict(dataset)
+    combo_row = dd_df.loc[dd_df["variable"] == variable]
+    combo_type = combo_row["dataType"]
+    if combo_type.empty:
+        raise ValueError(f"Variable {variable} not valid")
+    elif combo_type.iloc[0] != "joint":
+        raise ValueError(f"Variable {variable} is not a joint variable")
+    joint_vars = []
+
+    prov = str(combo_row["provenance"])
+    if "variables:" in prov:
+        vars = prov.removeprefix("variables:").strip()
+        vars = vars.replace('"', "")
+        vars = vars.split(",")
+        vars = [v.strip() for v in vars]
+        joint_vars = vars
+    return joint_vars
+
+
+
+@cache_with_metadata()
 def get_present_identifiers(dataset, is_raw=True):
     """
     Extracts and returns a list of present identifiers from a dataset directory, excluding combination variables.
@@ -806,10 +857,10 @@ def get_expected_identifiers(dataset, present_ids):
     for prov in visit_prov:
         variables = str(prov).split(",")
         variables = [v.strip() for v in variables]
-        # exclude combination variables
+        # exclude combination and joint variables
         for v in variables:
             try:
-                if get_variable_datatype(dataset, v) != "combination":
+                if get_variable_datatype(dataset, v) not in ["combination", "joint"]:
                     expected_vars.append(v)
             except ValueError:  # problematic variable in visit data
                 continue
@@ -822,12 +873,16 @@ def get_expected_identifiers(dataset, present_ids):
 
     return sorted(expected_ids)
 
-
-@dataclass
+# a row that takes a different variable and is only true if at least one var is present
+@dataclass(order=True)
 class CombinationRow:
     name: str
     variables: list[str]
-
+# a row that takes a different variable and is only true if all vars are present
+@dataclass(order=True)
+class JointRow:
+    name: str
+    variables: list[str]
 
 def get_expected_combination_rows(dataset) -> list[CombinationRow]:
     """
@@ -855,6 +910,121 @@ def get_expected_combination_rows(dataset) -> list[CombinationRow]:
 
     return sorted(expected_combos)
 
+def get_expected_joint_rows(dataset) -> list[JointRow]:
+    """
+    Extracts and returns a list of expected joint rows from the given dataset.
+
+    Args:
+        dataset (str): The dataset's base directory path.
+
+    Returns:
+        A list of JointRow objects, each representing a joint variable
+        and its associated variables as specified in the dataset's data dictionary.
+    """
+    dd_df = get_datadict(dataset)
+    joint_vars = dd_df[dd_df["dataType"] == "joint"]
+
+    expected_combos = []
+    # FIXME: duplicate of get_expected_combination_rows; refactor later
+    for _, row in joint_vars.iterrows():
+        prov = str(row["provenance"])
+        if prov.startswith("variables:"):
+            vars = prov.removeprefix("variables:").strip()
+            vars = vars.replace('"', "")
+            vars = vars.split(",")
+            vars = [v.strip() for v in vars]
+            expected_combos.append(JointRow(row["variable"], vars))
+
+    return sorted(expected_combos)
+
+
+def get_joint_root_vars(dataset) -> list[JointRow]:
+    """
+    Get all joint variable names from the data dictionary.
+
+    Args:
+        dataset (str): The path to the dataset directory.
+    Returns:
+        list of str: A list of joint variable names.
+    """
+    joint_rows = get_expected_joint_rows(dataset)
+    # turn it into a dict
+    jr_dict = {row.name: row for row in joint_rows}
+
+    combination_rows = get_expected_combination_rows(dataset)
+    cr_dict = {row.name: row for row in combination_rows}
+    for jr in joint_rows:
+        jr_vars = []
+        for jr_var in jr.variables:
+            if jr_var in cr_dict:
+                # expand combination row variables
+                jr_vars.extend(cr_dict[jr_var].variables)
+            elif jr_var in jr_dict:
+                # expand joint row variables
+                jr_vars.extend(jr_dict[jr_var].variables)
+            else:
+                jr_vars.append(jr_var)
+        jr.variables = jr_vars
+    return joint_rows
+
+
+def get_deviation_file(dir_filenames, identifier, joint_rows, logger):
+    """
+    Check if a folder contains a deviation.txt file.
+    returns deviation string if found, else None.
+
+    Args:
+        filename (str): The filename to check.
+        identifier (str): The identifier string to look for in the deviation file.
+        """
+    # check if any file even ends with deviation.txt
+    if not any(f.endswith("deviation.txt") for f in dir_filenames):
+        return None
+    if any(f == f"{identifier}_deviation.txt" for f in dir_filenames):
+        return f"{identifier}_deviation.txt"
+    for joint_row in joint_rows:
+            if identifier.variable in joint_row.variables:
+                logger.debug("Identifier %s is part of joint row %s", identifier, joint_row.name)
+                # check for deviation/no-data files for joint root variable
+                #joint_deviation_file = f"{joint_row.name}_deviation.txt"
+                #joint_no_data_file = f"{joint_row.name}_no-data.txt"
+                for var in joint_row.variables:
+                    joint_id = Identifier(
+                        identifier.subject, var, identifier.session, identifier.run, identifier.event
+                    )
+                    joint_deviation_file = f"{joint_id}_deviation.txt"
+                    if joint_deviation_file in dir_filenames:
+                        logger.debug("Found joint deviation file %s for identifier %s", joint_deviation_file, identifier)
+                        return joint_deviation_file
+    return None
+    
+def get_no_data_file(dir_filenames, identifier, joint_rows, logger):
+    """
+    Check if a folder contains a no-data.txt file.
+    returns no-data string if found, else None.
+
+    Args:
+        filename (str): The filename to check.
+        identifier (str): The identifier string to look for in the no-data file.
+        """
+    if not any(f.endswith("no-data.txt") for f in dir_filenames):
+        return None
+    if any(f == f"{identifier}_no-data.txt" for f in dir_filenames):
+        return f"{identifier}_no-data.txt"
+    for joint_row in joint_rows:
+            if identifier.variable in joint_row.variables:
+                logger.debug("Identifier %s is part of joint row %s", identifier, joint_row.name)
+                #joint_deviation_file = f"{joint_row.name}_deviation.txt"
+                #joint_no_data_file = f"{joint_row.name}_no-data.txt"
+                for var in joint_row.variables:
+                    joint_id = Identifier(
+                        identifier.subject, var, identifier.session, identifier.run, identifier.event
+                    )
+                    joint_no_data_file = f"{joint_id}_no-data.txt"
+                    if joint_no_data_file in dir_filenames:
+                        logger.debug("Found joint no-data file %s for identifier %s", joint_no_data_file, identifier)
+                        return joint_no_data_file
+    return None
 
 def get_unique_sub_ses_run(identifiers):
     """Get unique subject/session/run tuples from a list of identifiers.

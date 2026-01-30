@@ -96,12 +96,15 @@ def test_identifier_to_detailed_str(identifier, mock_dataset):
         ) as mock_get_variable_datatype,
         mock.patch("hallmonitor.hmutils.is_combination_var") as mock_is_combination_var,
         mock.patch("hallmonitor.hmutils.is_variable_encrypted") as mock_is_encrypted,
+        mock.patch("hallmonitor.hmutils.is_join_var") as mock_is_join_var,
     ):
         datatype = "mockdtype"
         mock_get_variable_datatype.return_value = datatype
         mock_is_encrypted.return_value = False
+        mock_is_join_var.return_value = False  # or True, as needed
 
         # test with combination var
+        
         mock_is_combination_var.return_value = True
         detailed_str = identifier.to_detailed_str(mock_dataset)
         assert detailed_str == f"sub-001/all_eeg/s1_r1_e1 ({datatype}) (combination)"
@@ -110,3 +113,5 @@ def test_identifier_to_detailed_str(identifier, mock_dataset):
         mock_is_combination_var.return_value = False
         detailed_str = identifier.to_detailed_str(mock_dataset)
         assert detailed_str == f"sub-001/all_eeg/s1_r1_e1 ({datatype})"
+
+

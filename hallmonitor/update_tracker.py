@@ -17,6 +17,7 @@ from hallmonitor.hmutils import (
     get_datadict,
     get_expected_combination_rows,
     get_new_redcaps,
+    get_expected_joint_rows,
     get_timestamp,
     get_variable_datatype,
     write_pending_errors,
@@ -223,7 +224,7 @@ def get_study_num(dataset):
     raise ValueError("Could not find study number")
 
 
-def fill_combination_columns(dataset: str, tracker_df: pd.DataFrame):
+def fill_combination_columns(dataset: str, logger: logging.Logger, tracker_df: pd.DataFrame):
     """
     Fill in combination columns by checking for the presence of one or more "child variables".
 
@@ -236,15 +237,13 @@ def fill_combination_columns(dataset: str, tracker_df: pd.DataFrame):
     combination_rows = get_expected_combination_rows(dataset)
 
     for combo in combination_rows:
+        logger.debug(f"Filling combination column: {combo.name} with children: {combo.variables}")
         combo_suffixes = get_allowed_suffixes(dataset, combo.name)
         for suffix in combo_suffixes:
             combo_col = f"{combo.name}_{suffix}"
             var_cols = pd.Index([f"{var}_{suffix}" for var in combo.variables])
             # some variables may not be valid for this suffix, skip them
             var_cols = var_cols[var_cols.isin(tracker_df.columns)]
-            print("[CUSTOM DEBUG] Filling combination column...")
-            print("var_cols:", var_cols, type(var_cols))
-            print("combo_col:", combo_col, type(combo_col))
             # we treat the combination column as an aggregator that is 1 if
             #   any of its "child variables" are truthy and 0 otherwise
             tracker_df[combo_col] = (tracker_df[var_cols].replace("0", 0).fillna(0) != 0).any(axis="columns").astype(int)
@@ -256,12 +255,13 @@ def fill_combination_columns(dataset: str, tracker_df: pd.DataFrame):
     return tracker_df
 
 
-def fill_status_data_columns(dataset: str, tracker_df: pd.DataFrame):
+def fill_status_data_columns(dataset: str, logger: logging.Logger, tracker_df: pd.DataFrame):
     """
     Fill in "status" and "data" columns based on their specified values.
 
     Args:
         dataset (str): The path to the dataset's base directory.
+        logger (logging.Logger): The logger instance for logging messages.
         tracker_df (pd.DataFrame): The dataset's central tracker.
     Returns:
         pd.DataFrame: The updated central tracker.
@@ -350,31 +350,67 @@ def fill_status_data_columns(dataset: str, tracker_df: pd.DataFrame):
                         rc for rc in redcaps if file.lower() in rc.lower() and ses in rc
                     ]
                     if len(matching_rc) == 0:
+                        logger.debug(f"Filling data column: {colname} based on file: {file} - no matching REDCap found, setting to 0")
                         tracker_df[colname] = 0
                         break
                     rc_df = pd.read_csv(matching_rc[0])
-                    common_subjects = tracker_df.index.intersection(rc_df["record_id"])
+                    common_subjects = tracker_df.index.intersection(rc_df["record_id"].apply(lambda x: get_parent_id(x)))
+                    logger.debug(f"Filling data column: {colname} based on file: {file} with {len(common_subjects)} common subjects")
+                    logger.debug(f"Subjects not in common: {tracker_df.index[~tracker_df.index.isin(common_subjects)].tolist()}")
                     tracker_df.loc[~tracker_df.index.isin(common_subjects), colname] = 0
 
     return tracker_df
 
-
-def get_child_id(parent_id: str, study_no: str) -> int | None:
+def fill_joint_columns(dataset: str, logger: logging.Logger, tracker_df: pd.DataFrame):
     """
-    Given a parent ID, extract and return the corresponding child ID.
+    Fill in joint columns by checking for the presence of all "child variables".
 
     Args:
-        parent_id (str): The parent ID string.
+        dataset (str): The path to the dataset's base directory.
+        tracker_df (pd.DataFrame): The dataset's central tracker.
+    Returns:
+        pd.DataFrame: The updated central tracker.
+    """
+    joint_rows = get_expected_joint_rows(dataset)
+
+    for joint in joint_rows:
+        logger.debug(f"Filling joint column: {joint.name} with variables: {joint.variables}")
+        joint_suffixes = get_allowed_suffixes(dataset, joint.name)
+        for suffix in joint_suffixes:
+            joint_col = f"{joint.name}_{suffix}"
+            var_cols = pd.Index([f"{var}_{suffix}" for var in joint.variables])
+            # some variables may not be valid for this suffix, skip them
+            var_cols = var_cols[var_cols.isin(tracker_df.columns)]
+            # we treat the joint column as an aggregator that is 1 if
+            #   all of its "child variables" are truthy and 0 otherwise
+            tracker_df[joint_col] = (tracker_df[var_cols].replace("0", 0).fillna(0) != 0).all(axis="columns").astype(int)
+
+            if (tracker_df[joint_col] == 0).all():
+                # if the joint column is all 0, we leave it blank
+                tracker_df[joint_col] = ""
+
+    return tracker_df
+
+
+
+def get_parent_id(child_id: str) -> int | None:
+    """
+    Given a child ID, extract and return the corresponding parent ID.
+
+    Args:
+        child_id (str): The child ID string.
         study_no (str): The two-digit study number.
 
     Returns:
-        int | None: The corresponding child ID as an integer, or None if no match is found.
+        int | None: The corresponding parent ID as an integer, or None if no match is found.
     """
-    child_id_match = re.search(study_no + r"([089])(\d{4})", str(parent_id))
-    if child_id_match is None:
+    child_id = str(child_id)
+    study_no = child_id[:2]
+    parent_id_match = re.search(study_no + r"([089])(\d{4})", str(child_id))
+    if parent_id_match is None:
         return None
-    child_id = study_no + "0" + child_id_match.group(2)
-    return int(child_id)
+    parent_id = study_no + "0" + parent_id_match.group(2)
+    return int(parent_id)
 
 #TODO Refactor tracker_df into some class or data structure to avoid passing it around so much
 
@@ -569,8 +605,8 @@ def main(
 
     tracker_df = get_central_tracker(dataset)
     # tracker_df = tracker_df.replace("0", 0)
-    proj_name = os.path.basename(os.path.normpath(dataset)).removesuffix("-dataset")
-
+    # proj_name = os.path.basename(os.path.normpath(dataset)).removesuffix("-dataset")
+    proj_name = os.path.basename(os.path.normpath(dataset))
     logger.debug("Project name: %s", proj_name)
     data_tracker_file = os.path.join(
         dataset, "data-monitoring", f"central-tracker_{proj_name}.csv"
@@ -762,9 +798,8 @@ def main(
                 if child_id_match is not None:
                     child_id = int(study_no + "0" + child_id_match.group(1))
                     rc_subjects.append(child_id)
-                    logger.debug(
-                        "Child ID %s found for parent ID %s", str(child_id), str(id)
-                    )
+                    #FIXME only debug if necessary
+                    # logger.debug("Child ID %s found for parent ID %s", str(child_id), str(id))
         else:
             rc_subjects = rc_ids
         rc_subjects.sort()
@@ -981,11 +1016,16 @@ def main(
     for _, row in id_df.iterrows():
         tracker_df.loc[int(row["id"]), row["colname"]] = row["passed"]
 
+    #FIXME: If a joint row depends on a combination row it may not be filled correctly
+
     # fill in combination columns based on the values of their "child variables"
-    tracker_df = fill_combination_columns(dataset, tracker_df)
+    tracker_df = fill_combination_columns(dataset, logger, tracker_df)
+
+    # fill in joint columns based on the values of their "child variables"
+    tracker_df = fill_joint_columns(dataset, logger, tracker_df)
 
     # fill in "status"/"data" columns based on their specified values
-    tracker_df = fill_status_data_columns(dataset, tracker_df)
+    tracker_df = fill_status_data_columns(dataset, logger, tracker_df)
 
     # Last Check: Ensure no data exists for subjects who did not consent
     # check_consent_tracker(tracker_df, variables=["consent","assent"])
