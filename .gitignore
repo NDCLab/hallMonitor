@@ -1,0 +1,5 @@
+# .gitignore
+# Ignore _pycache__ directories and .pyc files anywhere in the project
+__pycache__/
+*.pyc
+.pytest_cache/

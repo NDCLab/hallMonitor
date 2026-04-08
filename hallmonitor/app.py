@@ -537,11 +537,13 @@ def validate_data(
                         sibling_id = Identifier(
                             id.subject, var, id.session, id.run, id.event
                         )
+                        
                         # check if sibling_id is in present_ids
                         if sibling_id in present_ids:
                             sibling_files = get_expected_files(dataset, sibling_id)
                             # get the difference between unexpected_files and sibling_files
                             logger.debug("Sibling files for ID %s: %s", sibling_id, sibling_files)
+
                             for file in unexpected_files[:]:
                                 if file in sibling_files:
                                     unexpected_files.remove(file)
