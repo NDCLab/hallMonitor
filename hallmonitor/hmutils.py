@@ -997,6 +997,27 @@ def get_deviation_file(dir_filenames, identifier, joint_rows, logger):
                         logger.debug("Found joint deviation file %s for identifier %s", joint_deviation_file, identifier)
                         return joint_deviation_file
     return None
+
+def get_deviation_files(dir_filenames, identifier, joint_rows, logger):
+    """
+    Return a list of deviation files for the given identifier and joint rows.
+    """
+    joint_deviation_files = []
+    if not any(f.endswith("deviation.txt") for f in dir_filenames):
+        return []
+    for joint_row in joint_rows:
+            if identifier.variable in joint_row.variables:
+                logger.debug("Identifier %s is part of joint row %s", identifier, joint_row.name)
+                # check for deviation/no-data files for joint root variable
+                #joint_deviation_file = f"{joint_row.name}_deviation.txt"
+                #joint_no_data_file = f"{joint_row.name}_no-data.txt"
+                for var in joint_row.variables:
+                    joint_id = Identifier(
+                        identifier.subject, var, identifier.session, identifier.run, identifier.event
+                    )
+                    joint_deviation_file = f"{joint_id}_deviation.txt"
+                    joint_deviation_files.append(joint_deviation_file)
+    return joint_deviation_files
     
 def get_no_data_file(dir_filenames, identifier, joint_rows, logger):
     """

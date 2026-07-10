@@ -25,6 +25,7 @@ from hallmonitor.hmutils import (
     datadict_has_changes,
     file_last_modified_date,
     get_args,
+    get_deviation_files,
     get_deviation_string,
     get_eeg_errors,
     get_expected_combination_rows,
@@ -112,6 +113,7 @@ def validate_data(
     joint_rows = get_joint_root_vars(dataset)
     logger.debug("Joint rows: %s", joint_rows)
     combo_rows = get_expected_combination_rows(dataset)
+    logger.debug("Combination rows: %s", combo_rows)
     combo_variables = set()
     for combo in combo_rows:
         combo_variables.update(combo.variables)
@@ -123,8 +125,6 @@ def validate_data(
         len(expected_ids),
         len(missing_ids),
     )
-
-    
 
     # raise errors for missing identifiers without a no-data.txt
     for id in missing_ids:
@@ -326,6 +326,7 @@ def validate_data(
             no_data_file = get_no_data_file(dir_filenames, id, joint_rows,logger)
             has_no_data = True if no_data_file else False
 
+        joint_deviation_files =  get_deviation_files(dir_filenames, id, joint_rows,logger)
 
         logger.debug("has_deviation=%s, has_no_data=%s", has_deviation, has_no_data)
         if has_deviation and has_no_data:
@@ -367,9 +368,12 @@ def validate_data(
 
         misnamed_files = []
         dir_filepaths = [os.path.join(id_dir, f) for f in dir_filenames]
+        # Solution: Create all possible known deviation.txt that could be located within as long as it iis in joint/ combination and enable it
         for file_path in dir_filepaths:
             file_name = os.path.basename(file_path)
             if file_name == deviation_file:
+                continue
+            elif file_name in joint_deviation_files:
                 continue
             elif file_name == "issue.txt":
                 pending.append(
