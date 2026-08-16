@@ -727,6 +727,7 @@ def qa_validation(logger: logging.Logger, dataset: str):
     qa_df = qa_df[~qa_df["identifier"].isin(failed_ids)]
     # remove failed identifiers from pending-qa/
     for failed_id in failed_ids:
+        logger.info(f"Removing failed identifier {failed_id} from pending-qa/")
         try:
             id_dir = (
                 Identifier.from_str(failed_id)
@@ -756,6 +757,7 @@ def qa_validation(logger: logging.Logger, dataset: str):
 
     # move fully-verified files from pending-qa/ to checked/
     moved_ids = []
+    moved_file_paths = []
     for id in passed_ids:
         id = Identifier.from_str(id)
 
@@ -766,8 +768,13 @@ def qa_validation(logger: logging.Logger, dataset: str):
         )
         src_path = os.path.join(pending_qa_dir, id_raw_subdir, "*")
         files_to_move = glob.glob(src_path)
+        
         if len(files_to_move) == 0:
-            logger.error(f'No files to move for "passed" ID {id}, skipping')
+            if src_path in moved_file_paths:
+                logger.debug(f"Files for ID {id} have already been moved, skipping")
+                moved_ids.append(str(id))
+            else:
+                logger.error(f'No files to move in {src_path} for "passed" ID {id}, skipping')
             continue
 
         # sourcedata/checked/ stores data in "checked order"
@@ -778,6 +785,7 @@ def qa_validation(logger: logging.Logger, dataset: str):
             # unpack list of files before passing to `mv` script
             subprocess.run(["mv", *files_to_move, dest_path], check=True)
             logger.debug("Moved file(s) for ID %s to %s", id, dest_path)
+            moved_file_paths.extend(src_path)
             moved_ids.append(str(id))
         except subprocess.CalledProcessError as err:
             logger.error("Could not move file(s) for %s to %s (%s)", id, dest_path, err)
