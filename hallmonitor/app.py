@@ -785,7 +785,7 @@ def qa_validation(logger: logging.Logger, dataset: str):
             # unpack list of files before passing to `mv` script
             subprocess.run(["mv", *files_to_move, dest_path], check=True)
             logger.debug("Moved file(s) for ID %s to %s", id, dest_path)
-            moved_file_paths.extend(src_path)
+            moved_file_paths.append(src_path)
             moved_ids.append(str(id))
         except subprocess.CalledProcessError as err:
             logger.error("Could not move file(s) for %s to %s (%s)", id, dest_path, err)
