@@ -30,6 +30,7 @@ from hallmonitor.hmutils import (
     get_expected_combination_rows,
     get_joint_root_vars,
     get_deviation_file,
+    get_expected_deviation_files,
     get_no_data_file,
     get_expected_files,
     get_expected_identifiers,
@@ -339,6 +340,7 @@ def validate_data(
                 )
             )
             directory_has_errors = True
+        expected_deviation_files = get_expected_deviation_files(id, joint_rows,logger)
 
         # for EEG datatype, first line of deviation file must contain the text "files to process"
         if has_deviation and get_variable_datatype(dataset, id.variable) == "eeg":
@@ -369,7 +371,8 @@ def validate_data(
         dir_filepaths = [os.path.join(id_dir, f) for f in dir_filenames]
         for file_path in dir_filepaths:
             file_name = os.path.basename(file_path)
-            if file_name == deviation_file:
+            # TODO: change it so it returns a list of deviation files and then it checks if the file name is within it
+            if file_name in expected_deviation_files:
                 continue
             elif file_name == "issue.txt":
                 pending.append(
