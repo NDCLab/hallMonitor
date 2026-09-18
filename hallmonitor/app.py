@@ -163,6 +163,7 @@ def validate_data(
             logger.debug("Skipping %s, no-data.txt found", str(id))
             continue
 
+
         pending.append(
             new_error_record(
                 logger,
@@ -170,7 +171,7 @@ def validate_data(
                 id,
                 "Missing identifier",
                 f"Missing identifier (should be at {missing_id_dir}, folder exists but"
-                + f" no identifier or {no_data_file} was found)",
+                + f" no identifier or {id}_no-data.txt was found)",
             )
         )
 
