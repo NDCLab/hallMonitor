@@ -1052,6 +1052,31 @@ def get_no_data_file(dir_filenames, identifier, joint_rows, logger):
                         return joint_no_data_file
     return None
 
+def get_expected_no_data_files(identifier, joint_rows, logger):
+    """
+    returns all no-data files
+        """
+    # check if any file even ends with no-data.txt
+    expected_no_data_files = [f"{identifier}_no-data.txt"]
+    if not joint_rows:
+        return [f"{identifier}_no-data.txt"]
+    for joint_row in joint_rows:
+            if identifier.variable in joint_row.variables:
+                logger.debug("Identifier %s is part of joint row %s", identifier, joint_row.name)
+                # check for deviation/no-data files for joint root variable
+                #joint_deviation_file = f"{joint_row.name}_deviation.txt"
+                #joint_no_data_file = f"{joint_row.name}_no-data.txt"
+                for var in joint_row.variables:
+                    if var == identifier.variable:
+                        continue
+                    joint_id = Identifier(
+                        identifier.subject, var, identifier.session, identifier.run, identifier.event
+                    )
+                    joint_no_data_file = f"{joint_id}_no-data.txt"
+                    expected_no_data_files.append(joint_no_data_file)
+        
+    return list(set(expected_no_data_files))
+
 def get_unique_sub_ses_run(identifiers):
     """Get unique subject/session/run tuples from a list of identifiers.
 

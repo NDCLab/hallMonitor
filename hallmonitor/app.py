@@ -28,6 +28,7 @@ from hallmonitor.hmutils import (
     get_deviation_string,
     get_eeg_errors,
     get_expected_combination_rows,
+    get_expected_no_data_files,
     get_joint_root_vars,
     get_deviation_file,
     get_expected_deviation_files,
@@ -155,8 +156,8 @@ def validate_data(
             no_data_file = "no-data.txt"
         else:
             dir_files = os.listdir(missing_id_dir)
-            no_data_file = get_no_data_file(dir_files, id, joint_rows,logger)
-
+            #no_data_file = get_no_data_file(dir_files, id, joint_rows,logger)
+            no_data_file = f"{id}_no-data.txt" if f"{id}_no-data.txt" in dir_files else None
         
 
         if no_data_file and os.path.isfile(os.path.join(missing_id_dir, no_data_file)):
@@ -321,12 +322,6 @@ def validate_data(
         has_deviation = deviation_file in dir_filenames
         has_no_data = no_data_file in dir_filenames
         # in case of joint rows
-        if not has_deviation:
-            deviation_file = get_deviation_file(dir_filenames, id, joint_rows,logger)
-            has_deviation = True if deviation_file else False
-        if not has_no_data:
-            no_data_file = get_no_data_file(dir_filenames, id, joint_rows,logger)
-            has_no_data = True if no_data_file else False
 
 
         logger.debug("has_deviation=%s, has_no_data=%s", has_deviation, has_no_data)
@@ -342,6 +337,7 @@ def validate_data(
             )
             directory_has_errors = True
         expected_deviation_files = get_expected_deviation_files(id, joint_rows,logger)
+        expected_no_data_files = get_expected_no_data_files(id, joint_rows,logger)
 
         # for EEG datatype, first line of deviation file must contain the text "files to process"
         if has_deviation and get_variable_datatype(dataset, id.variable) == "eeg":
@@ -370,6 +366,17 @@ def validate_data(
 
         misnamed_files = []
         dir_filepaths = [os.path.join(id_dir, f) for f in dir_filenames]
+
+        # how do you account for files that are not deviation files of it's own? (e.g a deviation file for a sibling variable)
+        id_joint_rows = [jr for jr in joint_rows if id.variable in jr.variables]
+        sibling_ids = []
+        for jr in id_joint_rows:
+            for var in jr.variables:
+                if var == id.variable:
+                    continue
+                sibling_id = Identifier(id.subject, var, id.session, id.run, id.event)
+                sibling_ids.append(str(sibling_id))
+        
         for file_path in dir_filepaths:
             file_name = os.path.basename(file_path)
             # TODO: change it so it returns a list of deviation files and then it checks if the file name is within it
@@ -387,7 +394,15 @@ def validate_data(
                 )
                 directory_has_errors = True
                 continue
+            naming_errors = []
 
+            # check if file name starts with any in sibling_ids, if so, skip the naming error check for this file
+            if any(file_name.startswith(sibling_id) for sibling_id in sibling_ids):
+                logger.debug(
+                    "File %s is a deviation file for a sibling variable, skipping naming error check",
+                    file_name,
+                )
+                continue
             naming_errors = get_naming_errors(logger, dataset, file_path, has_deviation)
             if len(naming_errors) > 0:
                 pending.extend(naming_errors)
@@ -534,28 +549,30 @@ def validate_data(
                 unexpected_files.append(file)
         logger.debug("Unexpected files before sibling check: %s", unexpected_files)
         # FIXME too many nested loops, break this out or put in a function
-        if unexpected_files:
-            for jr in joint_rows:
-                if id.variable in jr.variables:
-                    for var in jr.variables:
-                        sibling_id = Identifier(
-                            id.subject, var, id.session, id.run, id.event
-                        )
-                        
-                        # check if sibling_id is in present_ids
-                        if sibling_id in present_ids:
-                            sibling_files = get_expected_files(dataset, sibling_id)
-                            # get the difference between unexpected_files and sibling_files
-                            logger.debug("Sibling files for ID %s: %s", sibling_id, sibling_files)
 
-                            for file in unexpected_files[:]:
-                                if file in sibling_files:
-                                    unexpected_files.remove(file)
-                        else: 
-                            logger.debug("Sibling ID %s not present", sibling_id)
+        expected_sibling_files = []
+        if unexpected_files:
+            id_joint_rows = [jr for jr in joint_rows if id.variable in jr.variables]
+            for jr in id_joint_rows:
+                for var in jr.variables:
+                    sibling_id = Identifier(id.subject, var, id.session, id.run, id.event)
+                    # check if sibling_id is in present_ids
+                    if sibling_id in present_ids:
+                        sibling_files = get_expected_files(dataset, sibling_id)
+                        # get the difference between unexpected_files and sibling_files
+                        logger.debug("Sibling files for ID %s: %s", sibling_id, sibling_files)
+                        expected_sibling_files.extend(sibling_files)
+        expected_sibling_files.extend(expected_deviation_files)
+        expected_sibling_files.extend(expected_no_data_files)
+        logger.debug("Expected sibling files: %s", expected_sibling_files)
         logger.debug("Unexpected files after sibling check: %s", unexpected_files)        
         if unexpected_files:
             for file in unexpected_files:
+                if file in expected_sibling_files or any(file.startswith(sibling_id) for sibling_id in sibling_ids):
+                    logger.debug(
+                        "File %s is an expected sibling file, not logging as unexpected", file
+                    )
+                    continue
                 pending.append(
                     new_error_record(
                         logger,
